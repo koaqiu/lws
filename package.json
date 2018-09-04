@@ -1,13 +1,11 @@
 {
-    "name": "lws",
-    "author": {
-      "name": "koaqiu@gmail.com"
-    },
-    "version": "0.0.1",
-    "dependencies": {
-      
-    },
-    "devDependencies": {
-      
-    }
+  "name": "lws",
+  "author": {
+    "name": "koaqiu@gmail.com"
+  },
+  "version": "0.0.1",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^10.9.4"
   }
+}
