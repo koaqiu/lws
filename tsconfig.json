@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "target": "es2017",
+        "module": "commonjs",
+        "sourceMap": false,
+        "outDir": "./bin",
+        "lib": [
+            "es2018",
+            "es2018.promise"
+        ]
+    },
+    "include": [
+        "./src"
+    ]
+}
