@@ -52,6 +52,9 @@ export default class Fs {
             return null;
         }
     }
+    static write(file:FileSystem.PathLike, data:any){
+        FileSystem.writeFileSync(file, data);
+    }
     static isFolder(file: FileSystem.PathLike): boolean {
         if (!FileSystem.existsSync(file))
             return false;

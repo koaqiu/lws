@@ -6,6 +6,7 @@ import Fs from "./utils/fileSystem";
 import Log, { setColor } from "./utils/logs";
 import WebBaseHandler from "./webBaseHandler";
 import { isInt } from "./utils/number";
+import upload from "./hanlder/upload";
 
 const VERSION = [0, 2, 5];
 
@@ -19,7 +20,7 @@ function showHelp() {
     console.log('选项：');
     console.log(' -P, --port <PORT>', "\t 监听的端口号（大于1024）。默认：8080");
     console.log(' --root <dir>', "\t\t 指定wwwRoot目录");
-    console.log(` --directoryBrowse <${setColor('green','yes')}|${setColor('red','no')}>`, `\t 是否浏览目录，默认：${setColor('green','yes')}`);
+    console.log(` --directoryBrowse <${setColor('green', 'yes')}|${setColor('red', 'no')}>`, `\t 是否浏览目录，默认：${setColor('green', 'yes')}`);
     console.log(' --openUrl <path>', "\t 默认打开的路径");
     console.log(' -D, --debug', "\t\t 测试模式，会有更多的输出");
     console.log(' -U, --update', "\t\t 在线更新");
@@ -47,20 +48,20 @@ function createServer(options, API_HANDLE) {
         }
     }
     global["API_HANDLE"] = API_HANDLE.filter(item => {
-        if((item.regex instanceof RegExp) == false)
+        if ((item.regex instanceof RegExp) == false)
             return false;
-        if(typeof item.handler != 'function')
+        if (typeof item.handler != 'function')
             return false;
         return true;
     }).map(item => {
-        if(isNaN(item.priority)){
+        if (isNaN(item.priority)) {
             item.priority = 0;
         }
         return item;
     });
-    
+
     const httpServer = http.createServer((req, res) => {
-        new WebBaseHandler(req, res, options).process();
+        new WebBaseHandler(req, res, options).process(httpServer);
     });
     httpServer.on('clientError', (err, socket) => {
         Log.error(err);
@@ -94,7 +95,7 @@ function createServer(options, API_HANDLE) {
     });
 }
 
-interface IOption{
+interface IOption {
     port: number,
     help: boolean,
     version: boolean,
@@ -105,12 +106,12 @@ interface IOption{
     /**
      * 配置文件
      */
-    config?:string,
+    config?: string,
     directoryBrowse: boolean,
     defaultDocuments: string[],
-    args?:string[]
+    args?: string[]
 }
-const defaultOptions:IOption = {
+const defaultOptions: IOption = {
     port: 8080,
     help: false,
     version: false,
@@ -126,7 +127,7 @@ const defaultOptions:IOption = {
         'default.htm',
     ]
 };
-function handlerArgs():IOption {
+function handlerArgs(): IOption {
     let args = process.argv;
     let argsCount = args.length;
     if (argsCount < 3)
@@ -203,7 +204,7 @@ function loadConfig(file = null) {
     Log.test(`加装配置文件：${configFile}`);
     if (Fs.isFile(configFile)) {
         config = Fs.readJson(configFile);
-        if(config){  
+        if (config) {
             delete config['help'];
             delete config['update'];
             //delete config['debug'];
@@ -219,7 +220,7 @@ function loadConfig(file = null) {
 let options = handlerArgs();
 Log.isDebug = options.debug;
 options = Object.assign({}, defaultOptions, loadConfig(options.config), options);
-console.log(options.port);
+
 if (options.help === true) {
     showHelp();
     Log.test(JSON.stringify(options));
@@ -229,5 +230,14 @@ if (options.help === true) {
 } else if (options.update === true) {
     //doUpdate();
 } else {
-    createServer(options,[]);
+    createServer(options, [{
+        priority: 0,//优先级，如果成功匹配多个则只执行数字最大的
+        key: 'action test',//key，暂时没什么用处
+        regex: /upload\.action/ig,//必须！正则表达式。匹配地址（类似路由功能）
+        //处理程序，必须！参数“ser”是上面的 “WebBaseHanlder”
+        handler: (request, response, options) => { 
+            return new upload(request, response, options);
+        }
+    }
+    ]);
 }

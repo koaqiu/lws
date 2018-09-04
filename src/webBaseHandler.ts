@@ -3,18 +3,27 @@ import * as URL from 'url';
 import Log, { setColor } from "./utils/logs";
 import Fs from "./utils/fileSystem";
 import { getMimetype } from "./utils/mimeType";
+import { IncomingMessage, ServerResponse, Server, OutgoingHttpHeaders } from "http";
+import ServerRequest from "./utils/serverRequest";
+import { formatSize } from "./utils/number";
 
 export default class WebBaseHandler {
-    private request;
-    private response;
+    private server: Server;
+    private request: ServerRequest;
+    private response: ServerResponse;
     private options;
-    private wwwRoot:string;
-    private pathName:string;
-    private filePath:string;
-    private requestUri:URL.UrlWithStringQuery;
+    private wwwRoot: string;
+    private pathName: string;
+    private filePath: string;
+    private requestUri: URL.UrlWithStringQuery;
 
+    public get Request(){
+        return this.request;
+    }
     constructor(req, res, options) {
-        this.request = req;
+        this.request = req instanceof ServerRequest
+                        ? req
+                        : new ServerRequest(req);
         this.response = res;
         this.options = options;
         this.wwwRoot = options.root;
@@ -24,7 +33,7 @@ export default class WebBaseHandler {
      * @param {URL} url
      * @returns {number} 0-不存在，1-文件，2-目录
      */
-    checkUrl(url:URL.UrlWithStringQuery) {
+    private checkUrl(url: URL.UrlWithStringQuery) {
         //对路径解码，防止中文乱码
         this.pathName = decodeURI(url.pathname);
         //获取资源文件的绝对路径
@@ -38,15 +47,15 @@ export default class WebBaseHandler {
         let st = Fs.getStat(this.filePath);
         return st.isFile() ? 1 : 2;
     }
-    handlerApi() {
+    private handlerApi() {
         // let html = '<h1>ERROR</h1>' + this.pathName;
         const API_HANDLE = global['API_HANDLE'];
-        let arr = API_HANDLE.filter(h => h.regex.test(this.pathName)).sort((a,b)=> a.priority > b.priority ? 1:-1);
-        API_HANDLE.map(item=> item.regex.test(''));//重置
+        let arr = API_HANDLE.filter(h => h.regex.test(this.pathName)).sort((a, b) => a.priority > b.priority ? 1 : -1);
+        API_HANDLE.map(item => item.regex.test(''));//重置
         if (arr && arr.length > 0) {
             this.logHttpRequest(200);
             let h = arr.pop();
-            return h.handler(this, h);
+            return h.handler(this.request, this.response, this.options).doAction();
         }
         return null;
     }
@@ -78,8 +87,10 @@ export default class WebBaseHandler {
      * 控制台输出日志
      * @param {number} [code=200] 
      */
-    logHttpRequest(code = 200) {
-        Log.info(`${setColor('yellow', this.request.method)} ${this.request.url} ${code == 200 ? `${setColor('green', code)}` : `${setColor('red', code)}`}`);
+    async logHttpRequest(code = 200) {
+        Log.info(`${this.request.remoteAddress} ${setColor('yellow', this.request.method)} ${this.request.url.href} [${this.request.referer}] ${code == 200 ? `${setColor('green', code)}` : `${setColor('red', code)}`}`
+            + ` [${formatSize(await this.request.getRequestLength())}]`
+        );
     }
     /**
      * 
@@ -95,11 +106,16 @@ export default class WebBaseHandler {
      * "content-type": "application/json"
      * @param data 
      */
-    outputJson(data) {
+    outputJson(data: any, headers?: OutgoingHttpHeaders) {
         this.logHttpRequest(200);
-        this.response.writeHead(200, {
-            "content-type": "application/json"
-        });
+        if (headers) {
+            if (!headers["content-type"]) {
+                headers["content-type"] = "application/json";
+            }
+        } else {
+            headers = { "content-type": "application/json" };
+        }
+        this.response.writeHead(200, headers);
         this.response.end(JSON.stringify(data));
         return this.response;
     }
@@ -121,9 +137,9 @@ export default class WebBaseHandler {
         this.response.writeHead(200, {
             "content-type": contentType
         });
-        this.logHttpRequest(200);
         //读取文件
         stream.pipe(this.response);
+        this.logHttpRequest(200);
         return this.response;
     }
 
@@ -196,6 +212,8 @@ export default class WebBaseHandler {
         }
 
         this.response.write('</ul></div>');
+        // console.log('referer=',this.request.referer);
+
         this.response.write(`<footer>${new Date()}</footer>`);
         this.response.write('</body></html>');
         this.response.end();
@@ -205,14 +223,15 @@ export default class WebBaseHandler {
      * 处理请求
      * @returns 
      */
-    process() {
-        this.requestUri = URL.parse(this.request.url);
+    process(server: Server) {
+        this.server = server;
+        this.requestUri = this.request.url;
         //检查请求的是不是存在的静态文件
         const fileStat = this.checkUrl(this.requestUri);
         if (!fileStat) {
             //TODO:处理/favicon.ico
             const result = this.handlerApi();
-            if(result)
+            if (result)
                 return result;
             else
                 return this.returnNotFound();
