@@ -1,12 +1,12 @@
 import * as FileSystem from "fs";
 import * as PATH from "path";
-import * as http from "http";
 import { exec } from "child_process";
 import Fs from "./utils/fileSystem";
 import Log, { setColor } from "./utils/logs";
-import WebBaseHandler from "./webBaseHandler";
 import { isInt } from "./utils/number";
 import upload from "./hanlder/upload";
+import { WebService } from './service';
+import WebBaseHandler from './webBaseHandler';
 
 const VERSION = [0, 2, 5];
 
@@ -60,39 +60,48 @@ function createServer(options, API_HANDLE) {
         return item;
     });
 
-    const httpServer = http.createServer((req, res) => {
-        new WebBaseHandler(req, res, options).process(httpServer);
-    });
-    httpServer.on('clientError', (err, socket) => {
-        Log.error(err);
-        socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
-    });
-    httpServer.on('error', (err, socket) => {
-        Log.error(`CAN NOT listen at ${err.port}`);
-    });
-    //指定一个监听的接口
-    httpServer.listen(port, function () {
-        console.log(`RootDir: ${wwwroot}`);
-        console.log(`app is running at port:${setColor('red', port)}`);
-        let os = process.platform;
-        let url = `http://localhost:${port}/${options.openUrl.replace(/^\/+/ig, '')}`;
-        switch (os) {
-            case 'darwin':
-                exec(`open '${url}'`);
-                break;
-            case 'freebsd':
-            case 'linux':
-            case 'sunos':
-                exec(`x-www-browser '${url}'`);
-                break;
-            case 'win32':
-                exec(`start ${url}`);
-                break;
-            default:
+    new WebService(options)
+        .addHandler({
+            priority: 0,//优先级，如果成功匹配多个则只执行数字最大的
+            key: 'action test',//key，暂时没什么用处
+            method: ['POST', 'GET'],
+            regex: () => /upload\.action/ig,
+            action: async (ser: WebBaseHandler) => {
+                const body = await ser.Request.getFormData();
+                const fileIndex = body.findIndex((item:any)=>{
+                    return item.fileName;
+                });
+                if(fileIndex != -1){
+                    const file:any = body[fileIndex];
+                    // Fs.write(file.fileName, Buffer.from(file.data,'utf-8'));
+                    Fs.write(file.fileName, Buffer.from(file.data,'binary'));
+                    // Fs.write(file.fileName, file.data);
+                }
+                return ser.outputJson(body);
+            }
+        })
+        .start(() => {
+            console.log(`RootDir: ${wwwroot}`);
+            console.log(`app is running at port:${setColor('red', port)}`);
+            let os = process.platform;
+            let url = `http://localhost:${port}/${options.openUrl.replace(/^\/+/ig, '')}`;
+            switch (os) {
+                case 'darwin':
+                    exec(`open '${url}'`);
+                    break;
+                case 'freebsd':
+                case 'linux':
+                case 'sunos':
+                    exec(`x-www-browser '${url}'`);
+                    break;
+                case 'win32':
+                    exec(`start ${url}`);
+                    break;
+                default:
 
-                break;
-        }
-    });
+                    break;
+            }
+        });
 }
 
 interface IOption {
@@ -230,14 +239,5 @@ if (options.help === true) {
 } else if (options.update === true) {
     //doUpdate();
 } else {
-    createServer(options, [{
-        priority: 0,//优先级，如果成功匹配多个则只执行数字最大的
-        key: 'action test',//key，暂时没什么用处
-        regex: /upload\.action/ig,//必须！正则表达式。匹配地址（类似路由功能）
-        //处理程序，必须！参数“ser”是上面的 “WebBaseHanlder”
-        handler: (request, response, options) => { 
-            return new upload(request, response, options);
-        }
-    }
-    ]);
+    createServer(options, []);
 }

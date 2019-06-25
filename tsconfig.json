@@ -3,6 +3,7 @@
         "target": "es2017",
         "module": "commonjs",
         "sourceMap": false,
+        "declaration": true,                   /* Generates corresponding '.d.ts' file. */
         "outDir": "./bin",
         "lib": [
             "es2018",

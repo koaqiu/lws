@@ -5,7 +5,7 @@ export default class upload extends WebBaseHandler{
     public async doAction(){
         if(this.Request.method == 'POST'){
             const length = await this.Request.getRequestLength();
-            const fromData = this.Request.getFormData();
+            const fromData = await this.Request.getFormData();
             const fileIndex = fromData.findIndex((item:any)=>{
                 return item.fileName;
             });

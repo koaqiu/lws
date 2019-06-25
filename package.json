@@ -4,6 +4,11 @@
     "name": "koaqiu@gmail.com"
   },
   "version": "0.0.1",
+  "scripts": {
+    "clear":"node tools/clear.js",
+    "dev":"tsc && node ."
+  },
+  "main": "bin/index.js",
   "dependencies": {},
   "devDependencies": {
     "@types/node": "^10.9.4"

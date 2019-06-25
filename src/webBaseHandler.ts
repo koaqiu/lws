@@ -17,47 +17,45 @@ export default class WebBaseHandler {
     private filePath: string;
     private requestUri: URL.UrlWithStringQuery;
 
-    public get Request(){
+    public get Path(): string { return this.pathName; }
+    public get Request() {
         return this.request;
     }
-    constructor(req, res, options) {
+
+    constructor(server, req, res, options) {
+        this.server = server;
         this.request = req instanceof ServerRequest
-                        ? req
-                        : new ServerRequest(req);
+            ? req
+            : new ServerRequest(req);
         this.response = res;
         this.options = options;
         this.wwwRoot = options.root;
+
+        this.requestUri = this.request.url;
+        //对路径解码，防止中文乱码
+        this.pathName = decodeURI(this.requestUri.pathname);
+        //获取资源文件的绝对路径
+        this.filePath = Fs.combine(this.wwwRoot, this.pathName);
     }
     /**
      * 检查地址是否存在，如果存在那么是文件还是目录
-     * @param {URL} url
      * @returns {number} 0-不存在，1-文件，2-目录
      */
-    private checkUrl(url: URL.UrlWithStringQuery) {
-        //对路径解码，防止中文乱码
-        this.pathName = decodeURI(url.pathname);
-        //获取资源文件的绝对路径
-        this.filePath = Fs.combine(this.wwwRoot, this.pathName);
-
+    private checkUrl() {
         Log.test(`pathname = ${this.pathName}`);
         Log.test(`filePath = ${this.filePath}`);
 
         if (!Fs.exists(this.filePath))
-            return false;
+            return 0;
         let st = Fs.getStat(this.filePath);
         return st.isFile() ? 1 : 2;
     }
-    private handlerApi() {
-        // let html = '<h1>ERROR</h1>' + this.pathName;
-        const API_HANDLE = global['API_HANDLE'];
-        let arr = API_HANDLE.filter(h => h.regex.test(this.pathName)).sort((a, b) => a.priority > b.priority ? 1 : -1);
-        API_HANDLE.map(item => item.regex.test(''));//重置
-        if (arr && arr.length > 0) {
-            this.logHttpRequest(200);
-            let h = arr.pop();
-            return h.handler(this.request, this.response, this.options).doAction();
+    public ok() {
+        if (this.request.ContentType.includes('json')) {
+            return this.outputJson('OK');
         }
-        return null;
+        this.logHttpRequest(200);
+        return this.outputContent('OK');
     }
     /**
      * 输出文本
@@ -147,7 +145,7 @@ export default class WebBaseHandler {
      * 输出目录
      * @returns {Response}
      */
-    async outputFolder() {
+    outputFolder() {
         //解决301重定向问题，如果pathname没以/结尾，并且没有扩展名
         const folder = this.pathName;
         if (!folder.endsWith('/')) {
@@ -187,18 +185,15 @@ export default class WebBaseHandler {
             this.response.write(`<li>&lt;dir&gt; <a href='${Fs.combine(folder, '..')}'>..</a></li>`);
         }
 
-        const files = await Fs.getFiles(this.filePath)
-            .then(files => {
-                return files.sort((a, b) => {
-                    if (a.IsDirectory && b.IsDirectory) {
-                        return a.FileName < b.FileName ? -1 : 1;
-                    }
-                    if (!a.IsDirectory && !b.IsDirectory) {
-                        return a.FileName < b.FileName ? -1 : 1;
-                    }
-                    return a.IsDirectory ? -1 : 1;
-                });
-            });
+        const files = Fs.getFiles(this.filePath).sort((a, b) => {
+            if (a.IsDirectory && b.IsDirectory) {
+                return a.FileName < b.FileName ? -1 : 1;
+            }
+            if (!a.IsDirectory && !b.IsDirectory) {
+                return a.FileName < b.FileName ? -1 : 1;
+            }
+            return a.IsDirectory ? -1 : 1;
+        });
         if (files.length == 0) {
             this.response.write(`<li><b>EMPTY</b></li>`);
         }
@@ -223,21 +218,12 @@ export default class WebBaseHandler {
      * 处理请求
      * @returns 
      */
-    process(server: Server) {
-        this.server = server;
-        this.requestUri = this.request.url;
+    process() {
         //检查请求的是不是存在的静态文件
-        const fileStat = this.checkUrl(this.requestUri);
-        if (!fileStat) {
-            //TODO:处理/favicon.ico
-            const result = this.handlerApi();
-            if (result)
-                return result;
-            else
-                return this.returnNotFound();
-        }
-
+        const fileStat = this.checkUrl();
         switch (fileStat) {
+            case 0:
+                return this.returnNotFound();
             case 1:
                 return this.outputFile();
             case 2:
