@@ -1,15 +1,15 @@
 import { IncomingMessage, IncomingHttpHeaders } from "http";
 import { Socket } from "net";
-import { parse as parseUrl, UrlWithStringQuery, URL } from "url";
+import { parse as parseUrl, UrlWithStringQuery, URL, URLSearchParams } from "url";
 
-const splitBuffer =(buffer:Buffer, sp:string) => {
+const splitBuffer = (buffer: Buffer, sp: string) => {
     const b = Buffer.from(sp);
-    let index =-1;
-    let off=0;
-    const result:Buffer[] =[];
-    while((index = buffer.indexOf(b, off) )!=-1){
-        if(index== 0){
-            off+=b.length;
+    let index = -1;
+    let off = 0;
+    const result: Buffer[] = [];
+    while ((index = buffer.indexOf(b, off)) != -1) {
+        if (index == 0) {
+            off += b.length;
             continue;
         }
         // const x = Buffer.alloc(index - off);
@@ -17,9 +17,25 @@ const splitBuffer =(buffer:Buffer, sp:string) => {
         const x = buffer.slice(off, index);
         result.push(x);
         // console.log(off, index, x.length, );
-        off=index+b.length;
+        off = index + b.length;
     }
-    return result.length>0?result:[buffer];
+    return result.length > 0 ? result : [buffer];
+}
+const mergeBodyData=(list:{name:string, data:any}[])=>{
+    const r = [];
+    list.forEach(item=>{
+        const index = r.findIndex((ii)=>ii.name==item.name);
+        if(index >=0){
+            if(Array.isArray(r[index].data)){
+                r[index].data.push(item.data);
+            }else{
+                r[index].data = [r[index].data, item.data];
+            }
+        }else{
+            r.push(item);
+        }
+    });
+    return r;
 }
 export default class ServerRequest {
     private _request: IncomingMessage;
@@ -62,16 +78,16 @@ export default class ServerRequest {
     public get statusCode(): number {
         return this._request.statusCode;
     }
-    public get Data(): any {
+    public get Data(): Buffer {
         return this._data_buffer;
     }
     public async getBase64Body() {
         const length = await this.getRequestLength();
         if (this.Data.includes('data:image/jpeg;base64,')) {
-            const data = this.Data.substr('data:image/jpeg;base64,'.length);
+            const data = this.Data.slice('data:image/jpeg;base64,'.length).toString();
             return Buffer.from(data, 'base64');
         }
-        return Buffer.from(this.Data, 'base64');
+        return Buffer.from(this.Data.toString(), 'base64');
     }
     public getRequestLength() {
         if (!this._readDone) {
@@ -103,24 +119,28 @@ export default class ServerRequest {
     public get referer() {
         return this.getHeader('Referer', '');
     }
+    public async getJsonBody(){
+        await this.getRequestLength();
+        return JSON.parse(this.Data.toString());
+    }
     public async getFormData(): Promise<any[]> {
         const length = await this.getRequestLength();
-        //multipart/form-data; boundary=----WebKitFormBoundaryni3Zmn3hO59op4b2
+        if (this.ContentType === 'application/x-www-form-urlencoded') {
+            const search = new URLSearchParams(decodeURIComponent(this.Data.toString()));
+            const r = [];
+            search.forEach((value, name) => {
+                r.push({
+                    name,
+                    data: value
+                })
+            })
+            return mergeBodyData(r);
+        }
         if (!this.ContentType.includes('multipart/form-data;')) {
             return [];
         }
         const boundary = this.ContentType.split('boundary=')[1];
-        const fields = splitBuffer(this.Data,`--${boundary}`)
-        //const fields = this.Data.toString().split(`--${boundary}`)
-            // .filter((line) => {
-            //     if (line.length < 10)
-            //         return false;
-            //     return true;
-            // })
-            // .map((line) => {
-            //     const l = line.length;
-            //     return line.substr(2, l - 4);
-            // })
+        const fields = splitBuffer(this.Data, `--${boundary}`)
             .filter((line) => {
                 return line.includes('Content-Disposition: form-data; ');
             })
@@ -134,37 +154,30 @@ export default class ServerRequest {
                 if (i > 0) {
                     let e = line.indexOf('"', i + 6);
                     if (e > 0) {
-                        data.name = line.slice(i+6, e).toString()
-                        //data.name = line.substr(i + 6, e - 6 - i);
-                        //line = line.substr(e + 1).replace(/^\r\n\r\n/g, '');
+                        data.name = line.slice(i + 6, e).toString()
                         line = line.slice(e + 1);
                         // file
                         if (line.includes('filename="')) {
                             i = line.indexOf('filename="');
                             e = line.indexOf('"', i + 10);
                             data['fileName'] = line.slice(i + 10, e).toString();
-                            //data['fileName'] = line.substr(i + 10, e - 10 - i);
-                            //line = line.substr(e + 3);
                             line = line.slice(e + 3);
-
                             if (line.includes('Content-Type: ')) { //14
                                 i = line.indexOf('Content-Type: ');
                                 e = line.indexOf('\r\n', i + 14);
                                 data['ContentType'] = line.slice(i + 14, e).toString();
-                                //data['ContentType'] = line.substr(i + 14, e - 14 - i);
-                                line = line.slice(e+4,line.length-2);
-                                //line = line.substr(e + 4);
+                                line = line.slice(e + 4, line.length - 2);
                             }
                             data.data = line;
                         } else {
-                            data.data = line.slice(4, line.length-2).toString();
+                            data.data = line.slice(4, line.length - 2).toString();
                         }
                     }
                 }
                 return data;
             });
         // console.log(fields);
-        return fields;
+        return mergeBodyData(fields);
     }
     public get connection() {
         return this._request.connection;

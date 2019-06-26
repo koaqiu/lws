@@ -4,11 +4,12 @@ import { exec } from "child_process";
 import Fs from "./utils/fileSystem";
 import Log, { setColor } from "./utils/logs";
 import { isInt } from "./utils/number";
-import upload from "./hanlder/upload";
 import { WebService } from './service';
 import WebBaseHandler from './webBaseHandler';
 
 const VERSION = [0, 2, 5];
+
+const workPath = PATH.basename(__dirname) === 'bin' ? PATH.dirname(__dirname) : __dirname;
 
 function showHelp() {
     let me = __filename.split(PATH.sep).pop();
@@ -27,9 +28,10 @@ function showHelp() {
     console.log(' -V, --version', "\t\t 显示版本");
     console.log(' -H, --help', "\t\t 显示帮助");
 }
-function createServer(options, API_HANDLE) {
+function createServer(options) {
     const port = options.port;
-    const wwwroot = PATH.resolve(__dirname, options.root);
+    console.log(workPath, options.root);
+    const wwwroot = PATH.resolve(workPath, options.root);
     if (!Fs.isFolder(wwwroot)) {
         Log.error(`${wwwroot} 无效`);
         process.exit(1);
@@ -47,18 +49,6 @@ function createServer(options, API_HANDLE) {
             return 1;
         }
     }
-    global["API_HANDLE"] = API_HANDLE.filter(item => {
-        if ((item.regex instanceof RegExp) == false)
-            return false;
-        if (typeof item.handler != 'function')
-            return false;
-        return true;
-    }).map(item => {
-        if (isNaN(item.priority)) {
-            item.priority = 0;
-        }
-        return item;
-    });
 
     new WebService(options)
         .addHandler({
@@ -74,8 +64,8 @@ function createServer(options, API_HANDLE) {
                 if(fileIndex != -1){
                     const file:any = body[fileIndex];
                     // Fs.write(file.fileName, Buffer.from(file.data,'utf-8'));
-                    Fs.write(file.fileName, Buffer.from(file.data,'binary'));
-                    // Fs.write(file.fileName, file.data);
+                    // Fs.write(file.fileName, Buffer.from(file.data,'binary'));
+                    Fs.write(file.fileName, file.data);
                 }
                 return ser.outputJson(body);
             }
@@ -127,7 +117,7 @@ const defaultOptions: IOption = {
     update: false,
     openUrl: '',
     debug: false,
-    root: __dirname,
+    root: 'public',
     directoryBrowse: true,
     defaultDocuments: [
         'index.html',
@@ -239,5 +229,5 @@ if (options.help === true) {
 } else if (options.update === true) {
     //doUpdate();
 } else {
-    createServer(options, []);
+    createServer(options);
 }
