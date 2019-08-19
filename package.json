@@ -1,5 +1,5 @@
 {
-  "name": "lws",
+  "name": "light-web-service",
   "author": {
     "name": "koaqiu@gmail.com"
   },
@@ -8,7 +8,7 @@
     "clear":"node tools/clear.js",
     "dev":"tsc && node ."
   },
-  "main": "bin/index.js",
+  "main": "bin/service.js",
   "dependencies": {},
   "devDependencies": {
     "@types/node": "^10.9.4"
