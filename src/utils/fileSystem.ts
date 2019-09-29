@@ -49,6 +49,7 @@ export default class Fs {
             return false;
         return FileSystem.statSync(file).isFile();
     }
+    static createReadStream = FileSystem.createReadStream;
     /**
      * 合并路径
      * @param paths 

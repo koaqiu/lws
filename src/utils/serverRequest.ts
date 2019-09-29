@@ -65,7 +65,9 @@ export default class ServerRequest {
         });
         request.on('end', () => { this._readDone = true; })
     }
-
+    public get BaseRequest(){
+        return this._request;
+    }
     public get Headers(): IncomingHttpHeaders {
         return this._request.headers;
     }
@@ -190,7 +192,8 @@ export default class ServerRequest {
             || (this._request.connection && this._request.connection.remoteAddress)
             || (this._request.socket && this._request.socket.remoteAddress)
             || '';
-        return (Array.isArray(ip) ? ip : ip.split(',')).pop();
+        const ipArr = Array.isArray(ip) ? ip : ip.split(',');
+        return ipArr.length > 0 ? ipArr[0] : '';
     }
     public get remotePort() {
         return this._socket.remotePort;

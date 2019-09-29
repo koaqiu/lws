@@ -1,23 +1,10 @@
 import * as http from "http";
 import Log, { setColor } from "./utils/logs";
 import WebBaseHandler from "./webBaseHandler";
+import { IAuthorize, IMiddleware, IServiceOption, IRequestHandler, MethodTypes } from './types';
 
-type MethodTypes = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'OPTIONS';
-export interface IHandler {
-    priority: number;//优先级，如果成功匹配多个则只执行数字最大的
-    key: string;//key，暂时没什么用处
-    method: MethodTypes | MethodTypes[];
-    regex: () => RegExp;//必须！正则表达式。匹配地址（类似路由功能）
-    action: (ser: WebBaseHandler) => void;
-}
-interface IOption {
-    port: number,
-    debug: boolean,
-    root: string,
-    directoryBrowse: boolean,
-    defaultDocuments: string[],
-}
-const defaultOptions: IOption = {
+
+const defaultOptions: IServiceOption = {
     port: 8080,
     debug: true,
     root: '',
@@ -30,15 +17,31 @@ const defaultOptions: IOption = {
     ]
 };
 export class WebService {
-    private _options!: IOption;
-    private _handler: IHandler[] = [];
-    constructor(options: IOption) {
+    private _options!: IServiceOption;
+    private authorizations: IAuthorize[] = [];
+    private middlewares: IMiddleware[] = [];
+    private _handler: IRequestHandler[] = [];
+    constructor(options: IServiceOption) {
         this._options = {
             ...defaultOptions,
             ...options
         };
     }
+    /**
+     * 添加验证处理方法
+     * @param {IAuthorize} handler 
+     */
+    public addAuthorize(handler: IAuthorize){
+        this.authorizations.push(handler);
+        return this;
+    }
+    public addMiddleware(handler: IMiddleware) {
+        this.middlewares.push(handler);
+        return this;
+    }
     private handlerRequest(server: http.Server, req: http.IncomingMessage, res: http.ServerResponse) {
+        //new WebBaseHanlder(privateNum, req, res, this.options, this.authorizations)
+            //.process(privateNum, this.handlers);
         const ws = new WebBaseHandler(server, req, res, this._options);
         const handler = this._handler.filter(
             h =>
@@ -57,7 +60,7 @@ export class WebService {
         Log.error(err);
         socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
     }
-    public addHandler(handler: IHandler) {
+    public addHandler(handler: IRequestHandler) {
         this._handler.push(handler);
         return this;
     }
@@ -65,6 +68,16 @@ export class WebService {
         const port = this._options.port;
         const wwwroot = this._options.root;
         const httpServer = http.createServer((req, res) => {
+            if (this.middlewares.length > 0) {
+                let result = null;
+                for (let i = 0; i < this.middlewares.length; i++) {
+                    const middleware = this.middlewares[i];
+                    result = middleware.process(req, res, this.authorizations, result);
+                    if (res.finished) return;
+                    if (result === null) break;
+                }
+            }
+            
             this.handlerRequest(httpServer, req, res);
         });
         httpServer.on('clientError', (err, socket) => {

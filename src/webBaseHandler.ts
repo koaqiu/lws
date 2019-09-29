@@ -6,8 +6,9 @@ import { getMimetype } from "./utils/mimeType";
 import { IncomingMessage, ServerResponse, Server, OutgoingHttpHeaders } from "http";
 import ServerRequest from "./utils/serverRequest";
 import { formatSize } from "./utils/number";
+import { IAuthorize, IHandler, IRequestHandler } from './types';
 
-export default class WebBaseHandler {
+export default class WebBaseHandler implements IHandler {
     private server: Server;
     private request: ServerRequest;
     private response: ServerResponse;
@@ -16,13 +17,14 @@ export default class WebBaseHandler {
     private pathName: string;
     private filePath: string;
     private requestUri: URL.UrlWithStringQuery;
+    private authorizations: IAuthorize[];
 
     public get Path(): string { return this.pathName; }
     public get Request() {
         return this.request;
     }
 
-    constructor(server, req, res, options) {
+    constructor(server, req, res, options, authorizations?: IAuthorize[]) {
         this.server = server;
         this.request = req instanceof ServerRequest
             ? req
@@ -36,17 +38,19 @@ export default class WebBaseHandler {
         this.pathName = decodeURI(this.requestUri.pathname);
         //获取资源文件的绝对路径
         this.filePath = Fs.combine(this.wwwRoot, this.pathName);
+        this.authorizations = authorizations || [];
     }
+
     /**
      * 检查地址是否存在，如果存在那么是文件还是目录
      * @returns {number} 0-不存在，1-文件，2-目录
      */
     private checkUrl() {
-        Log.test(`pathname = ${this.pathName}`);
-        Log.test(`filePath = ${this.filePath}`);
+        // Log.test(`pathname = ${this.pathName}`);
+        // Log.test(`filePath = ${this.filePath}`);
 
         if (!Fs.exists(this.filePath))
-            return 0;
+            return false;
         let st = Fs.getStat(this.filePath);
         return st.isFile() ? 1 : 2;
     }
@@ -122,28 +126,56 @@ export default class WebBaseHandler {
      * 会根据文件扩展名判断contentType
      * @param outputFilePath 
      */
-    outputFile(outputFilePath = null) {
-        if (outputFilePath == null) {
+    outputFile(outputFilePath: string = '', minetype = '') {
+        if (outputFilePath == '') {
             outputFilePath = this.filePath;
         }
-        const contentType = getMimetype(Fs.getExtname(outputFilePath));
-        const stream = FileSystem.createReadStream(outputFilePath);
+        const contentType = minetype ? minetype : getMimetype(Fs.getExtname(outputFilePath));
+        const status = Fs.getStat(outputFilePath);
+        if (this.request.Headers["if-modified-since"] === status.ctime.toUTCString()) {
+            this.response.writeHead(304);
+            this.response.end();
+            return this.response;
+        }
+
+        let statusCode = 200;
+        let statusMessage = 'OK';
+        let start = 0
+        let end = status.size; //可读流是包前包后
+        const resHeads = {
+            "Content-type": contentType,
+            "Content-Length": status.size,
+            'Last-Modified': status.ctime.toUTCString()
+        };
+        const range = /^bytes=(\d+)-(\d*)/ig.exec(this.request.Headers['range'] || '');
+        if (range) {
+            //分片
+            // 拿到起始位置和结束为止
+            start = /^\d+$/ig.test(range[1]) ? parseInt(range[1]) : start;
+            end = /^\d+$/ig.test(range[2]) ? parseInt(range[2]) : end - 1;
+            // 获取成功 并且文件总大小告诉客户端
+            resHeads['Accept-Ranges'] = 'bytes';
+            resHeads['Content-Range'] = `bytes ${start}-${end}/${status.size}`;
+            //resHeads['Content-Length'] = end - start + 1;
+            delete resHeads['Content-Length'];
+            statusCode = 206;
+            statusMessage = 'Partial Content';
+        }
+        const stream = Fs.createReadStream(outputFilePath, { start, end });
         //错误处理
         stream.on('error', () => {
             this.returnServerError();
         });
-        this.response.writeHead(200, {
-            "content-type": contentType
-        });
+        this.response.writeHead(statusCode, statusMessage, resHeads);
+        this.logHttpRequest(statusCode);
         //读取文件
         stream.pipe(this.response);
-        this.logHttpRequest(200);
         return this.response;
     }
 
     /**
      * 输出目录
-     * @returns {Response}
+     * @returns {ServerResponse}
      */
     outputFolder() {
         //解决301重定向问题，如果pathname没以/结尾，并且没有扩展名
@@ -214,21 +246,72 @@ export default class WebBaseHandler {
         this.response.end();
         this.logHttpRequest(200);
     }
+    async handlerApi(handlers: IRequestHandler[]) {
+        if (handlers.length < 1) return false;
+        const method = this.request.method;
+        let arr = handlers
+            .filter(h => method === h.method &&
+                (typeof h.regex === 'function' ? h.regex(this) : h.regex.test(this.pathName)))
+            .sort((a, b) => a.priority > b.priority ? 1 : -1);
+        handlers.map(item => typeof item.regex === 'function' ? false : item.regex.test(''));//重置
+        if (arr.length < 1) {
+            return false;
+        }
+
+        let h = arr[arr.length - 1];
+        if ((typeof h.authorize === 'boolean' && h.authorize === true) || typeof h.authorize === 'function') {
+            // 需要认证
+            if (this.authorizations.length == 0) {
+                // 没有认证器
+                return await this.outputContent('401 no authorizations', 401);
+            }
+            // 认证
+            const r = this.authorizations.some((item) => {
+                const r = item.handler(this.request.BaseRequest, item.config);
+                if (r.success === false) {
+                    return false
+                }
+                if (typeof h.authorize === 'function') {
+                    return h.authorize(this, r.data);
+                }
+                return true;
+            })
+            if (r === false) {
+                return await this.outputContent('401', 401);
+            }
+        }
+        this.logHttpRequest(200);
+        try {
+            return await h.action(this);
+        } catch (err) {
+            return await this.outputContent(err, 500);
+        }
+    }
     /**
      * 处理请求
      * @returns 
      */
-    process() {
-        //检查请求的是不是存在的静态文件
+    async process(key: number, handlers: IRequestHandler[]) {
+        //if (key != privateNum) { throw new Error('非法调用！'); }
+        //检查请求的是不是静态文件
         const fileStat = this.checkUrl();
+        //API
+        var r = await this.handlerApi(handlers);
+        if (r !== false) {
+            return r;
+        }
+        if (!fileStat) {
+            //TODO:处理/favicon.ico
+            return this.returnNotFound();
+        }
+
         switch (fileStat) {
-            case 0:
-                return this.returnNotFound();
             case 1:
                 return this.outputFile();
             case 2:
-                return this.outputFolder();
+                return this.outputFolder(); // this.outputContent('<h1>403 Forbidden</h1>', 403);
         }
+
         return this.returnServerError();
     }
 }
